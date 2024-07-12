@@ -17,6 +17,8 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from config import BOT_TOKEN
+
 
 # Ensure you have the necessary NLTK data files
 nltk.download('punkt')
@@ -162,7 +164,7 @@ async def handle_file(update: Update, context: CallbackContext) -> None:
 
 def main():
     # Replace 'YOUR_BOT_TOKEN' with your actual bot token
-    application = Application.builder().token("BOT_TOKEN").build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Document.MimeType("text/plain"), handle_file))
