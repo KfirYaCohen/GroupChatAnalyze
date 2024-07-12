@@ -15,10 +15,10 @@ from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag, word_tokenize
 import arabic_reshaper
 from bidi.algorithm import get_display
-from telegram import Update, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
 from config import BOT_TOKEN
-
+from datetime import datetime, timedelta
 
 # Ensure you have the necessary NLTK data files
 nltk.download('punkt')
@@ -50,7 +50,7 @@ def getDatapoint(line):
         author = None
     return date, time, author, message
 
-def analyze_chat_data(filepath):
+def analyze_chat_data(filepath, time_period="All_Time"):
     # Read data from file
     data = []
     with open(filepath, encoding="utf-8") as fp:
@@ -95,8 +95,19 @@ def analyze_chat_data(filepath):
 
     df['Message'] = df['Message'].apply(reshape_and_reverse)
 
+    # Filter data based on the time period
+    end_date = datetime.now()
+    if time_period == "Last_Week":
+        start_date = end_date - timedelta(days=7)
+    elif time_period == "Last_Month":
+        start_date = end_date - timedelta(days=30)
+    else:
+        start_date = df['DateTime'].min()
+
+    df = df[(df['DateTime'] >= start_date) & (df['DateTime'] <= end_date)]
+
     # Drop NaN values
-    data = df.dropna()
+    df = df.dropna()
 
     # Function to check if a message contains only the letter ח (one or more times)
     def contains_only_chet(message):
@@ -148,19 +159,41 @@ def analyze_chat_data(filepath):
     plt.savefig('chet_messages_percentage.png')
     plt.close()
 
+    return start_date, end_date
+
 
 async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text('Hi! Please send the chat text file to analyze.')
 
 async def handle_file(update: Update, context: CallbackContext) -> None:
     file = await update.message.document.get_file()
-    filepath = 'chat.txt'
-    await file.download_to_drive(filepath)
-    analyze_chat_data(filepath)
-    chat_id = update.message.chat_id
-    await context.bot.send_photo(chat_id, photo=open('messages_per_author.png', 'rb'))
-    await context.bot.send_photo(chat_id, photo=open('media_messages_per_author.png', 'rb'))
-    await context.bot.send_photo(chat_id, photo=open('chet_messages_percentage.png', 'rb'))
+    context.user_data['filepath'] = 'chat.txt'
+    await file.download_to_drive(context.user_data['filepath'])
+    await update.message.reply_text('File received. Please choose the time period to analyze:', reply_markup=await get_time_buttons())
+
+async def get_time_buttons() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton("All Time", callback_data='All_Time')],
+        [InlineKeyboardButton("Last Month", callback_data='Last_Month')],
+        [InlineKeyboardButton("Last Week", callback_data='Last_Week')]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+async def button_click(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    time_period = query.data
+    await query.edit_message_text(text=f"Selected option: {time_period}. Analyzing data, please wait...")
+    filepath = context.user_data.get('filepath')
+    if filepath:
+        start_date, end_date = analyze_chat_data(filepath, time_period)
+        chat_id = query.message.chat_id
+        await context.bot.send_message(chat_id, text=f"Analyzing data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        await context.bot.send_photo(chat_id, photo=open('messages_per_author.png', 'rb'))
+        await context.bot.send_photo(chat_id, photo=open('media_messages_per_author.png', 'rb'))
+        await context.bot.send_photo(chat_id, photo=open('chet_messages_percentage.png', 'rb'))
+    else:
+        await query.message.reply_text('No file found. Please send the chat text file again.')
 
 def main():
     # Replace 'YOUR_BOT_TOKEN' with your actual bot token
@@ -168,6 +201,7 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Document.MimeType("text/plain"), handle_file))
+    application.add_handler(CallbackQueryHandler(button_click))
 
     application.run_polling()
 
