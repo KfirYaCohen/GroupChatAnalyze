@@ -4,7 +4,7 @@ import numpy as np
 import emoji
 from collections import Counter
 import matplotlib.pyplot as plt
-from PIL import Image
+from io import BytesIO
 from wordcloud import WordCloud, STOPWORDS, ImageColorGenerator
 import nltk
 from nltk.tokenize import word_tokenize
@@ -50,28 +50,24 @@ def getDatapoint(line):
         author = None
     return date, time, author, message
 
-def analyze_chat_data(filepath, time_period="All_Time"):
-    # Read data from file
+def analyze_chat_data(file_content, time_period="All_Time"):
+    # Read data from content
     data = []
-    with open(filepath, encoding="utf-8") as fp:
-        fp.readline()  # Skip the first line
-        messageBuffer = []
-        date, time, author = None, None, None
-        while True:
-            line = fp.readline()
-            if not line:
-                if messageBuffer:  # Save the last message
-                    data.append([date, time, author, ' '.join(messageBuffer)])
-                break
-            line = line.strip()
-            if date_time(line):
-                if messageBuffer:
-                    data.append([date, time, author, ' '.join(messageBuffer)])
-                messageBuffer.clear()
-                date, time, author, message = getDatapoint(line)
-                messageBuffer.append(message)
-            else:
-                messageBuffer.append(line)
+    lines = file_content.splitlines()
+    messageBuffer = []
+    date, time, author = None, None, None
+    for line in lines:
+        line = line.strip()
+        if date_time(line):
+            if messageBuffer:
+                data.append([date, time, author, ' '.join(messageBuffer)])
+            messageBuffer.clear()
+            date, time, author, message = getDatapoint(line)
+            messageBuffer.append(message)
+        else:
+            messageBuffer.append(line)
+    if messageBuffer:
+        data.append([date, time, author, ' '.join(messageBuffer)])
 
     # Create DataFrame
     df = pd.DataFrame(data, columns=["Date", 'Time', 'Author', 'Message'])
@@ -103,7 +99,6 @@ def analyze_chat_data(filepath, time_period="All_Time"):
         start_date = end_date - timedelta(days=30)
     else:
         start_date = df['DateTime'].min()
-
     df = df[(df['DateTime'] >= start_date) & (df['DateTime'] <= end_date)]
 
     # Drop NaN values
@@ -133,7 +128,9 @@ def analyze_chat_data(filepath, time_period="All_Time"):
     plt.xlabel('Author')
     plt.ylabel('Number of Messages')
     plt.xticks(rotation=45)
-    plt.savefig('messages_per_author.png')
+    buf1 = BytesIO()
+    plt.savefig(buf1, format='png')
+    buf1.seek(0)
     plt.close()
 
     # Plot the number of media messages per author
@@ -145,7 +142,9 @@ def analyze_chat_data(filepath, time_period="All_Time"):
     plt.xlabel('Author')
     plt.ylabel('Number of Media Messages')
     plt.xticks(rotation=45)
-    plt.savefig('media_messages_per_author.png')
+    buf2 = BytesIO()
+    plt.savefig(buf2, format='png')
+    buf2.seek(0)
     plt.close()
 
     # Plot the percentage of messages containing only 'ח' per author
@@ -156,10 +155,12 @@ def analyze_chat_data(filepath, time_period="All_Time"):
     plt.xlabel('Author')
     plt.ylabel("Percentage of 'ח' Messages")
     plt.xticks(rotation=45)
-    plt.savefig('chet_messages_percentage.png')
+    buf3 = BytesIO()
+    plt.savefig(buf3, format='png')
+    buf3.seek(0)
     plt.close()
 
-    return start_date, end_date
+    return start_date, end_date, buf1, buf2, buf3
 
 
 async def start(update: Update, context: CallbackContext) -> None:
@@ -167,8 +168,8 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 async def handle_file(update: Update, context: CallbackContext) -> None:
     file = await update.message.document.get_file()
-    context.user_data['filepath'] = 'chat.txt'
-    await file.download_to_drive(context.user_data['filepath'])
+    file_content = await file.download_as_bytearray()
+    context.user_data['file_content'] = file_content.decode('utf-8')
     await update.message.reply_text('File received. Please choose the time period to analyze:', reply_markup=await get_time_buttons())
 
 async def get_time_buttons() -> InlineKeyboardMarkup:
@@ -184,14 +185,14 @@ async def button_click(update: Update, context: CallbackContext) -> None:
     await query.answer()
     time_period = query.data
     await query.edit_message_text(text=f"Selected option: {time_period}. Analyzing data, please wait...")
-    filepath = context.user_data.get('filepath')
-    if filepath:
-        start_date, end_date = analyze_chat_data(filepath, time_period)
+    file_content = context.user_data.get('file_content')
+    if file_content:
+        start_date, end_date, buf1, buf2, buf3 = analyze_chat_data(file_content, time_period)
         chat_id = query.message.chat_id
         await context.bot.send_message(chat_id, text=f"Analyzing data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-        await context.bot.send_photo(chat_id, photo=open('messages_per_author.png', 'rb'))
-        await context.bot.send_photo(chat_id, photo=open('media_messages_per_author.png', 'rb'))
-        await context.bot.send_photo(chat_id, photo=open('chet_messages_percentage.png', 'rb'))
+        await context.bot.send_photo(chat_id, photo=buf1)
+        await context.bot.send_photo(chat_id, photo=buf2)
+        await context.bot.send_photo(chat_id, photo=buf3)
     else:
         await query.message.reply_text('No file found. Please send the chat text file again.')
 
