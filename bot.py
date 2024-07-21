@@ -85,9 +85,13 @@ def analyze_chat_data(file_content, time_period="All_Time"):
 
     # Reshape and reverse Hebrew text for messages
     def reshape_and_reverse(text):
-        reshaped_text = arabic_reshaper.reshape(text)
-        bidi_text = get_display(reshaped_text)
-        return bidi_text
+        try:
+            reshaped_text = arabic_reshaper.reshape(text)
+            bidi_text = get_display(reshaped_text)
+            return bidi_text
+        except AssertionError as e:
+            print(f"Error reshaping text: {text}, Error: {e}")
+            return text
 
     df['Message'] = df['Message'].apply(reshape_and_reverse)
 
